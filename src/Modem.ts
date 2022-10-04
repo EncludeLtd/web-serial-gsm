@@ -60,7 +60,7 @@ class Modem {
 		modemOptions: Partial<ModemOptions> = defaultModemOptions
 	) {
 		this.port = port;
-		this.modemOptions = { ...modemOptions, ...defaultModemOptions };
+		this.modemOptions = { ...defaultModemOptions, ...modemOptions };
 	}
 	emit(event: StatusChangeEvent | ATEvent) {
 		this.events.emit(event.name, event.payload);
