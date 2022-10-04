@@ -1,9 +1,20 @@
 import { ATCommandSet, ATResponse, ATError, Sms } from './ATCommandSet';
 const EventEmitter = require('events');
 
-const serialConfig = {
+const defaultSerialConfig: SerialOptions = {
 	baudRate: 57600
 };
+
+const defaultModemConfig = {
+	timeout: 10000
+};
+
+const defaultModemOptions = {
+	serialConfig: defaultSerialConfig,
+	modemConfig: defaultModemConfig
+};
+
+type ModemOptions = typeof defaultModemOptions;
 
 export type StatusChangeEvent = {
 	name: 'statusChange';
@@ -33,6 +44,7 @@ class Modem {
 	writableStreamClosed?: Promise<void>;
 	events = new EventEmitter();
 	at = new ATCommandSet();
+	modemOptions = defaultModemOptions;
 	private reading = true;
 
 	get status() {
@@ -43,8 +55,12 @@ class Modem {
 		this.emit({ name: 'statusChange', payload: { status: this.status } });
 	}
 
-	constructor(port: SerialPort) {
+	constructor(
+		port: SerialPort,
+		modemOptions: Partial<ModemOptions> = defaultModemOptions
+	) {
 		this.port = port;
+		this.modemOptions = { ...modemOptions, ...defaultModemOptions };
 	}
 	emit(event: StatusChangeEvent | ATEvent) {
 		this.events.emit(event.name, event.payload);
@@ -57,7 +73,7 @@ class Modem {
 	}
 	async connect() {
 		try {
-			await this.port.open(serialConfig);
+			await this.port.open(this.modemOptions.serialConfig);
 			this.startReader();
 			await this.startWriter();
 			await this.boot();
@@ -184,7 +200,7 @@ class Modem {
 	}
 	listenUntilEnd(
 		end: string = this.at.OK,
-		timeout = 10000
+		timeout = this.modemOptions.modemConfig.timeout
 	): Promise<[ATResponse | null, ATError | null]> {
 		let res = '';
 		return new Promise((resolve) => {
