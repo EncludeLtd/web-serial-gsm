@@ -22,44 +22,51 @@ interface ParsedPdu {
 }
 
 export class ATError {
+	type: '+CMS' | '+CME';
 	response: string;
+	code: string;
 	constructor(res: string, at: ATCommandSet) {
 		this.response = res.trim();
+		const segments = res.split(' ');
+		this.type = segments.shift()?.trim() as '+CMS' | '+CME';
+		this.code = segments.pop()!?.trim();
 	}
 }
 
 export class ATResponse {
-	output: string;
+	rawOutput: string;
 	ok: boolean;
 	items: ATResponseItem[] = [];
-	constructor(output: string, at: ATCommandSet) {
-		// Save initial output
-		this.output = output;
+	constructor(rawOutput: string, at: ATCommandSet) {
+		// Save initial rawOutput
+		this.rawOutput = rawOutput;
 
 		// Check if output ends with OK and remove from output
-		this.ok = output.endsWith(at.OK);
-		output = output.slice(0, -at.OK.length);
+		this.ok = rawOutput.endsWith(at.OK);
+		rawOutput = rawOutput.slice(0, -at.OK.length);
 
-		const itemArray = output.trim().split(at.CR);
-		while (itemArray.length) {
-			const cmd = itemArray.shift();
-			const data = itemArray.shift();
-			this.items.push(new ATResponseItem(cmd!, data!));
-		}
-		console.log(this);
+		const splitOutput = rawOutput.split(/(?=\r\n[\+\^])/g).filter((s) => s);
+		this.items = splitOutput.map((item) => new ATResponseItem(item));
 	}
 }
 
 export class ATResponseItem {
-	command: string;
-	args: (number | null)[];
-	data: string;
+	rawOutput: string;
+	command?: string;
+	args: string[] = [];
+	data?: string;
 	private _pdu!: ParsedPdu;
-	constructor(command: string, data: string) {
-		const [cmd, args] = command.split(': ');
-		this.command = cmd;
-		this.args = args?.split(',').map((arg) => (arg ? parseInt(arg) : null));
-		this.data = data;
+	constructor(item: string) {
+		this.rawOutput = item.trim();
+		const splitOutput = this.rawOutput
+			.split(/(?<=(?:\r\n|: ))/g)
+			.map((s) => s.trim())
+			.filter((s) => s);
+		this.data = splitOutput.pop();
+		const command = splitOutput.shift();
+		if (command) this.command = command;
+		const args = splitOutput.pop();
+		if (args) this.args = args.split(',');
 	}
 	get pdu() {
 		if (!this._pdu) this._pdu = smsPdu.parse(this.data);
@@ -69,20 +76,18 @@ export class ATResponseItem {
 export class Sms {
 	segments: ATResponseItem[];
 	length: number;
-	origin: string;
 	sender: string;
 	text: string;
 	timestamp: Date;
 	type: string;
+	get indices(): (number | null)[] {
+		return this.segments.map((item) => parseInt(item.args[0]) || null);
+	}
 
 	constructor(segments: ATResponseItem[]) {
 		this.segments = segments;
-		this.length = segments.reduce(
-			(acc, curr) => (curr.args[3] ? acc + curr.args[3] : acc),
-			0
-		);
-		this.origin = segments[0].pdu.origination;
-		this.sender = segments[0].pdu.smsc;
+		this.length = 0; //TODO: Count length of SMS
+		this.sender = segments[0].pdu.origination;
 		this.text = segments
 			.sort((prev, curr) =>
 				prev.pdu.concat && curr.pdu.concat
@@ -107,8 +112,12 @@ export class Sms {
 		concatenated.forEach((item) => messages.push(new Sms(item)));
 		return messages;
 	}
-	static generatePdu(phoneNumber: string, text: string): Pdu[] {
-		return smsPdu.generateSubmit(phoneNumber, text);
+	static generatePdu(
+		phoneNumber: string,
+		text: string,
+		options?: { encoding?: 'gsm' | 'ucs2' }
+	): Pdu[] {
+		return smsPdu.generateSubmit(phoneNumber, text, options);
 	}
 }
 
@@ -124,10 +133,13 @@ export class ATCommandSet {
 		return `AT${this.CR}`;
 	}
 	getSimId() {
-		return `AT^SCID`;
+		return `AT^SCID${this.CR}`;
 	}
 	getIMEI() {
-		return `AT+GSN`;
+		return `AT+GSN${this.CR}`;
+	}
+	setErrorFormat(mode: 0 | 1 | 2) {
+		return `AT+CMEE=${mode}${this.CR}`;
 	}
 	listMessages(status: 1 | 2 | 3 | 4 | string) {
 		return `AT+CMGL=${status}${this.CR}`;
